@@ -1,0 +1,1016 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Coffee, Calendar, MapPin, Thermometer, Brain, Heart, Sun, Cloud, Moon, Sparkles, Plus, Search, Filter, BarChart3, Map, Clock, Tag, Palette, BookOpen, TrendingUp, Droplet, Mountain, Cherry, Flower2, Sunrise, Sunset, Star, Zap, Award, Lightbulb, Edit3, Wind, Users, ShieldCheck, Maximize, Minimize, CheckCircle
+} from 'lucide-react';
+
+// localStorage Keys
+const LOCAL_STORAGE_KEYS = {
+  ENTRIES: 'coffeeTastingApp.entries',
+  TASTE_LEVEL: 'coffeeTastingApp.tasteLevel',
+  EXPERIENCE_POINTS: 'coffeeTastingApp.experiencePoints',
+  DISCOVERED_FLAVORS: 'coffeeTastingApp.discoveredFlavors',
+  DISCOVERED_ORIGINS: 'coffeeTastingApp.discoveredOrigins',
+};
+
+// XP獲得量定義
+const XP_REWARDS = {
+  NEW_ENTRY: 10,
+  NEW_FLAVOR_DISCOVERED: 5, // 新しいフレーバーを発見するごと
+  NEW_ORIGIN_DISCOVERED: 20, // 新しい産地を記録するごと
+  DETAILED_NOTES: 5, // 詳細なノート（閾値以上）
+  TRAINING_CHALLENGE_SUCCESS: 25,
+  BLIND_TEST_HIGH_ACCURACY: 30,
+};
+
+const LEVEL_THRESHOLDS = [0, 50, 120, 200, 300, 450, 600, 800, 1000, 1250, 1500]; // レベルアップに必要なXP
+
+const CoffeeTastingApp = () => {
+  const [entries, setEntries] = useState(() => {
+    const savedEntries = localStorage.getItem(LOCAL_STORAGE_KEYS.ENTRIES);
+    return savedEntries ? JSON.parse(savedEntries).map(e => ({...e, date: new Date(e.date)})) : [];
+  });
+  const [tasteLevel, setTasteLevel] = useState(() => parseInt(localStorage.getItem(LOCAL_STORAGE_KEYS.TASTE_LEVEL) || '1'));
+  const [experiencePoints, setExperiencePoints] = useState(() => parseInt(localStorage.getItem(LOCAL_STORAGE_KEYS.EXPERIENCE_POINTS) || '0'));
+  const [discoveredFlavors, setDiscoveredFlavors] = useState(() => {
+    const savedFlavors = localStorage.getItem(LOCAL_STORAGE_KEYS.DISCOVERED_FLAVORS);
+    return savedFlavors ? JSON.parse(savedFlavors) : [];
+  });
+  const [discoveredOrigins, setDiscoveredOrigins] = useState(() => {
+    const savedOrigins = localStorage.getItem(LOCAL_STORAGE_KEYS.DISCOVERED_ORIGINS);
+    return savedOrigins ? JSON.parse(savedOrigins) : [];
+  });
+
+  const [currentView, setCurrentView] = useState('home');
+  const [selectedEntry, setSelectedEntry] = useState(null);
+  const [showNewEntry, setShowNewEntry] = useState(false);
+  // ... (他のstateは既存のものを活用)
+  const [searchQuery, setSearchQuery] = useState('');
+  const canvasRef = useRef(null);
+  const [showLevelUpNotification, setShowLevelUpNotification] = useState(false);
+  const [lastLevel, setLastLevel] = useState(tasteLevel);
+
+  // 初期データ (初回起動時のみ)
+  useEffect(() => {
+    if (entries.length === 0 && !localStorage.getItem(LOCAL_STORAGE_KEYS.ENTRIES)) {
+      const initialData = [
+        // ... (既存の初期データを活用、ただしcoordinatesは削除または計算ロジックに合わせて変更)
+        {
+          id: 1, shop: "ハチマル珈琲", origin: "ホンジュラス", region: "Campanario, Masaguara", producer: "Yessica Victoria", variety: "ブルボン種", process: "ハニープロセス", altitude: "1700m",
+          flavors: ["アップル", "キャラメル", "フローラル"],
+          impression: "りんごのような爽やかな酸味", laterNotes: "八朔のような柑橘感も感じた",
+          season: "spring", timeOfDay: "morning", mood: "refreshing", emotion: "focused",
+          date: new Date('2024-03-15'), brewTemp: 92, brewTime: "2:30", grindSize: "medium",
+          // 味覚マップ用パラメータ (0-10スケール)
+          paramAcidity: 7, paramSweetness: 6, paramComplexity: 7, paramBody: 5,
+        },
+        // ... 他の初期データも同様に
+      ];
+      // 初期データから座標を計算
+      const processedInitialData = initialData.map(entry => ({
+        ...entry,
+        coordinates: calculateMapCoordinates(entry.paramAcidity, entry.paramSweetness, entry.paramComplexity, entry.paramBody)
+      }));
+      setEntries(processedInitialData);
+      // 初期データからフレーバーと産地を抽出
+      const initialFlavors = new Set();
+      const initialOrigins = new Set();
+      processedInitialData.forEach(entry => {
+        entry.flavors.forEach(f => initialFlavors.add(f.toLowerCase()));
+        initialOrigins.add(entry.origin.toLowerCase());
+      });
+      setDiscoveredFlavors(Array.from(initialFlavors));
+      setDiscoveredOrigins(Array.from(initialOrigins));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
+  // データ永続化
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.ENTRIES, JSON.stringify(entries));
+  }, [entries]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.TASTE_LEVEL, tasteLevel.toString());
+  }, [tasteLevel]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.EXPERIENCE_POINTS, experiencePoints.toString());
+  }, [experiencePoints]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.DISCOVERED_FLAVORS, JSON.stringify(discoveredFlavors));
+  }, [discoveredFlavors]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.DISCOVERED_ORIGINS, JSON.stringify(discoveredOrigins));
+  }, [discoveredOrigins]);
+
+  // XPとレベル管理
+  const addXP = (amount, reason = "") => {
+    const newXP = experiencePoints + amount;
+    setExperiencePoints(newXP);
+    console.log(`+${amount} XP! Reason: ${reason}`);
+
+    // レベルアップ判定
+    const currentLevelThreshold = LEVEL_THRESHOLDS[tasteLevel];
+    if (newXP >= currentLevelThreshold) {
+      const newLevel = tasteLevel + 1;
+      setTasteLevel(newLevel);
+      setLastLevel(tasteLevel); // レベルアップ前のレベルを保存
+      setShowLevelUpNotification(true);
+      setTimeout(() => setShowLevelUpNotification(false), 5000); // 5秒後に通知を消す
+      console.log(`Level Up! New Level: ${newLevel}`);
+    }
+  };
+
+  const handleNewEntrySubmit = (formData) => {
+    let totalXPGained = XP_REWARDS.NEW_ENTRY;
+    let xpReasons = ["New Entry"];
+
+    // 新しいフレーバーの発見
+    const newFlavorsInEntry = formData.flavors.filter(
+      (flavor) => !discoveredFlavors.includes(flavor.toLowerCase())
+    );
+    if (newFlavorsInEntry.length > 0) {
+      const uniqueNewFlavors = Array.from(new Set(newFlavorsInEntry.map(f => f.toLowerCase())));
+      setDiscoveredFlavors([...discoveredFlavors, ...uniqueNewFlavors]);
+      const flavorXp = uniqueNewFlavors.length * XP_REWARDS.NEW_FLAVOR_DISCOVERED;
+      totalXPGained += flavorXp;
+      xpReasons.push(`${uniqueNewFlavors.length} new flavor(s)`);
+    }
+
+    // 新しい産地の発見
+    if (formData.origin && !discoveredOrigins.includes(formData.origin.toLowerCase())) {
+      setDiscoveredOrigins([...discoveredOrigins, formData.origin.toLowerCase()]);
+      totalXPGained += XP_REWARDS.NEW_ORIGIN_DISCOVERED;
+      xpReasons.push("New origin");
+    }
+    
+    // 詳細ノートボーナス
+    if ((formData.impression.length + (formData.laterNotes?.length || 0)) > 100) { // 例: 合計100文字以上
+        totalXPGained += XP_REWARDS.DETAILED_NOTES;
+        xpReasons.push("Detailed notes");
+    }
+
+    addXP(totalXPGained, xpReasons.join(', '));
+
+    const newEntry = {
+      ...formData,
+      id: entries.length > 0 ? Math.max(...entries.map(e => e.id)) + 1 : 1,
+      date: new Date(),
+      coordinates: calculateMapCoordinates(formData.paramAcidity, formData.paramSweetness, formData.paramComplexity, formData.paramBody),
+    };
+    setEntries([...entries, newEntry].sort((a, b) => b.date - a.date)); // 日付の降順でソート
+    setShowNewEntry(false);
+  };
+
+  // 味覚マップ座標計算ロジック
+  // X軸: Complexity (0-10) を 0-100 にマッピング
+  // Y軸: Sweetness - Acidity のバランス (-10 to 10) を 0-100 にマッピング
+  const calculateMapCoordinates = (acidity, sweetness, complexity, body) => {
+    const x = (parseFloat(complexity) || 5) * 10; // 0-10 -> 0-100
+    // Sweetness - Acidity: 結果は -10 (酸味強い) から 10 (甘味強い)
+    // これを 0-100 の範囲に変換: ((value - min) / (max - min)) * 100
+    const yBalance = (parseFloat(sweetness) || 5) - (parseFloat(acidity) || 5);
+    const y = ((yBalance - (-10)) / (10 - (-10))) * 100;
+    return { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
+  };
+  
+  // 新規エントリーフォーム
+  const NewEntryForm = () => {
+    const [formData, setFormData] = useState({
+      shop: '', origin: '', region: '', producer: '', variety: '', process: '', altitude: '',
+      flavors: [], // 文字列の配列として保持
+      impression: '', laterNotes: '',
+      season: '', timeOfDay: '', mood: '', emotion: '',
+      brewTemp: 92, brewTime: '', grindSize: 'medium',
+      // 味覚マップ用パラメータ (0-10 スケール)
+      paramAcidity: 5, paramSweetness: 5, paramComplexity: 5, paramBody: 5,
+    });
+    const [flavorInput, setFlavorInput] = useState('');
+
+    const handleFlavorChange = (e) => {
+      setFlavorInput(e.target.value);
+    };
+
+    const addFlavorTag = () => {
+      if (flavorInput.trim() !== '') {
+        const newFlavors = flavorInput.split(',').map(f => f.trim()).filter(f => f);
+        setFormData(prev => ({
+          ...prev,
+          flavors: Array.from(new Set([...prev.flavors, ...newFlavors])) // 重複を避ける
+        }));
+        setFlavorInput('');
+      }
+    };
+    
+    const removeFlavorTag = (flavorToRemove) => {
+        setFormData(prev => ({
+            ...prev,
+            flavors: prev.flavors.filter(f => f !== flavorToRemove)
+        }));
+    };
+
+    const handleSubmit = () => {
+      // バリデーションなど必要に応じて
+      handleNewEntrySubmit(formData);
+    };
+    
+    // 既存のフォームUIをベースに、項目追加とフレーバー入力UI変更
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-xl md:max-w-2xl lg:max-w-4xl w-full max-h-[95vh] overflow-y-auto">
+          <div className="sticky top-0 bg-gradient-to-r from-amber-600 to-orange-600 p-4 sm:p-6 rounded-t-3xl">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                <Coffee className="w-7 h-7 sm:w-8 sm:h-8" />
+                新しいテイスティング記録
+              </h2>
+              <button onClick={() => setShowNewEntry(false)} className="text-white/80 hover:text-white transition-colors text-2xl">✕</button>
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-6 space-y-5">
+            {/* 基本情報 */}
+            <fieldset className="border border-amber-300 rounded-2xl p-4 space-y-3 bg-amber-50/50">
+              <legend className="font-semibold text-amber-900 px-2 flex items-center gap-2"><MapPin className="w-5 h-5" />基本情報</legend>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input type="text" placeholder="店名/購入場所" className="input-field" value={formData.shop} onChange={(e) => setFormData({...formData, shop: e.target.value})} />
+                <input type="text" placeholder="原産国 (例: エチオピア)" className="input-field" value={formData.origin} onChange={(e) => setFormData({...formData, origin: e.target.value})} />
+                <input type="text" placeholder="地域 (例: イルガチェフェ)" className="input-field" value={formData.region} onChange={(e) => setFormData({...formData, region: e.target.value})} />
+                <input type="text" placeholder="生産者/農園" className="input-field" value={formData.producer} onChange={(e) => setFormData({...formData, producer: e.target.value})} />
+                <input type="text" placeholder="品種 (例: ゲイシャ)" className="input-field" value={formData.variety} onChange={(e) => setFormData({...formData, variety: e.target.value})} />
+                <input type="text" placeholder="精製方法 (例: ナチュラル)" className="input-field" value={formData.process} onChange={(e) => setFormData({...formData, process: e.target.value})} />
+                <input type="text" placeholder="標高 (例: 1800m)" className="input-field" value={formData.altitude} onChange={(e) => setFormData({...formData, altitude: e.target.value})} />
+              </div>
+            </fieldset>
+
+            {/* 味覚記録 */}
+            <fieldset className="border border-orange-300 rounded-2xl p-4 space-y-3 bg-orange-50/50">
+                <legend className="font-semibold text-orange-900 px-2 flex items-center gap-2"><Palette className="w-5 h-5" />味覚の記録</legend>
+                <textarea placeholder="第一印象（飲んだ直後の感想）" className="textarea-field h-20" value={formData.impression} onChange={(e) => setFormData({...formData, impression: e.target.value})} />
+                <textarea placeholder="あとから分かった味（時間経過や調べた後の気づき）" className="textarea-field h-20" value={formData.laterNotes} onChange={(e) => setFormData({...formData, laterNotes: e.target.value})} />
+                
+                <div>
+                    <label className="text-sm text-orange-700 mb-1 block">フレーバー (カンマ区切りで入力後、追加ボタンを押してください)</label>
+                    <div className="flex gap-2">
+                        <input type="text" placeholder="例: チョコレート,ナッツ,柑橘" className="input-field flex-grow" value={flavorInput} onChange={handleFlavorChange} />
+                        <button onClick={addFlavorTag} className="btn-secondary px-3 py-2 text-sm">追加</button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                        {formData.flavors.map(flavor => (
+                            <span key={flavor} className="bg-orange-200 text-orange-800 px-2 py-1 rounded-full text-xs flex items-center gap-1">
+                                {flavor}
+                                <button onClick={() => removeFlavorTag(flavor)} className="text-orange-600 hover:text-orange-900">✕</button>
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </fieldset>
+            
+            {/* 味覚バランス (マップ用) */}
+            <fieldset className="border border-purple-300 rounded-2xl p-4 space-y-3 bg-purple-50/50">
+                <legend className="font-semibold text-purple-900 px-2 flex items-center gap-2"><Maximize className="w-5 h-5" />味覚バランス (0-10)</legend>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div><label className="text-sm text-purple-700">酸味: {formData.paramAcidity}</label><input type="range" min="0" max="10" value={formData.paramAcidity} onChange={(e) => setFormData({...formData, paramAcidity: parseInt(e.target.value)})} className="w-full slider-purple" /></div>
+                    <div><label className="text-sm text-purple-700">甘味: {formData.paramSweetness}</label><input type="range" min="0" max="10" value={formData.paramSweetness} onChange={(e) => setFormData({...formData, paramSweetness: parseInt(e.target.value)})} className="w-full slider-purple" /></div>
+                    <div><label className="text-sm text-purple-700">複雑さ: {formData.paramComplexity}</label><input type="range" min="0" max="10" value={formData.paramComplexity} onChange={(e) => setFormData({...formData, paramComplexity: parseInt(e.target.value)})} className="w-full slider-purple" /></div>
+                    <div><label className="text-sm text-purple-700">ボディ: {formData.paramBody}</label><input type="range" min="0" max="10" value={formData.paramBody} onChange={(e) => setFormData({...formData, paramBody: parseInt(e.target.value)})} className="w-full slider-purple" /></div>
+                </div>
+            </fieldset>
+
+            {/* シーン設定 */}
+            {/* ... (既存のUIを流用。ただし、buttonのclassに input-field-like なスタイルを適用すると統一感が出るかも) ... */}
+            <fieldset className="border border-blue-300 rounded-2xl p-4 space-y-3 bg-blue-50/50">
+                <legend className="font-semibold text-blue-900 px-2 flex items-center gap-2"><Calendar className="w-5 h-5" />シーンと気分</legend>
+                 {/* ... (省略: 既存の季節、時間帯、気分のボタン群) ... */}
+                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                        <p className="text-sm text-blue-700 mb-1">季節</p>
+                        <select value={formData.season} onChange={(e) => setFormData({...formData, season: e.target.value})} className="input-field w-full">
+                            <option value="">選択なし</option>
+                            <option value="spring">春</option><option value="summer">夏</option><option value="autumn">秋</option><option value="winter">冬</option>
+                        </select>
+                    </div>
+                    <div>
+                        <p className="text-sm text-blue-700 mb-1">時間帯</p>
+                        <select value={formData.timeOfDay} onChange={(e) => setFormData({...formData, timeOfDay: e.target.value})} className="input-field w-full">
+                            <option value="">選択なし</option>
+                            <option value="morning">朝</option><option value="afternoon">昼</option><option value="evening">夕</option><option value="night">夜</option>
+                        </select>
+                    </div>
+                    <div>
+                        <p className="text-sm text-blue-700 mb-1">気分</p>
+                        <select value={formData.emotion} onChange={(e) => setFormData({...formData, emotion: e.target.value})} className="input-field w-full">
+                             <option value="">選択なし</option>
+                             <option value="relaxed">リラックス</option><option value="focused">集中</option><option value="social">社交的</option><option value="creative">創造的</option><option value="energized">元気</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            {/* 抽出条件 */}
+            <fieldset className="border border-green-300 rounded-2xl p-4 space-y-3 bg-green-50/50">
+                <legend className="font-semibold text-green-900 px-2 flex items-center gap-2"><Thermometer className="w-5 h-5" />抽出条件</legend>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div><label className="text-sm text-green-700">水温 (°C)</label><input type="number" className="input-field w-full" value={formData.brewTemp} onChange={(e) => setFormData({...formData, brewTemp: e.target.value})} /></div>
+                    <div><label className="text-sm text-green-700">抽出時間</label><input type="text" placeholder="例: 2:30" className="input-field w-full" value={formData.brewTime} onChange={(e) => setFormData({...formData, brewTime: e.target.value})} /></div>
+                    <div>
+                        <label className="text-sm text-green-700">挽き目</label>
+                        <select className="input-field w-full" value={formData.grindSize} onChange={(e) => setFormData({...formData, grindSize: e.target.value})}>
+                            <option value="">選択</option><option value="coarse">粗挽き</option><option value="medium">中挽き</option><option value="fine">細挽き</option><option value="extra-fine">極細挽き</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+
+            <button onClick={handleSubmit} className="w-full bg-gradient-to-r from-amber-600 to-orange-600 text-white py-3 sm:py-4 rounded-xl font-semibold hover:shadow-lg transition-all text-base sm:text-lg">
+              記録を保存
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // 味のマップビュー (座標計算ロジックに合わせて変更)
+  const FlavorMap = ({ mapEntries = entries }) => { // propsで表示するエントリーを受け取れるように
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+
+      // 背景のグラデーション
+      const gradient = ctx.createRadialGradient(width/2, height/2, 0, width/2, height/2, Math.max(width, height)/1.5);
+      gradient.addColorStop(0, 'rgba(255, 250, 240, 0.6)'); // 中心を明るく
+      gradient.addColorStop(1, 'rgba(255, 237, 213, 0.9)'); // 外側を濃く
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      // 軸のラベル
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillStyle = '#78350f'; // amber-900
+      ctx.textAlign = 'center';
+      ctx.fillText('シンプル', 40, height/2 + 5); // 微調整
+      ctx.fillText('複雑', width - 40, height/2 + 5);
+      
+      ctx.save(); // Y軸ラベルを回転させるために保存・復元
+      ctx.translate(width/2 - 5, 20); // X軸の中心、上端から少し下
+      ctx.rotate(-Math.PI / 2); // 90度回転
+      ctx.textAlign = 'right';
+      ctx.fillText('強い酸味', 0, 0);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(width/2 - 5, height - 20); // X軸の中心、下端から少し上
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'left';
+      ctx.fillText('強い甘味', 0, 0);
+      ctx.restore();
+
+      // グリッド線
+      ctx.strokeStyle = 'rgba(251, 146, 60, 0.15)'; // orange-400 より薄く
+      ctx.lineWidth = 1;
+      const numGridLines = 5; // グリッド線の数を増やす
+      for (let i = 1; i < numGridLines; i++) {
+        ctx.beginPath(); ctx.moveTo(width * i / numGridLines, 0); ctx.lineTo(width * i / numGridLines, height); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, height * i / numGridLines); ctx.lineTo(width, height * i / numGridLines); ctx.stroke();
+      }
+
+      // エントリーをプロット
+      mapEntries.forEach((entry, index) => {
+        if (!entry.coordinates) return; // 座標がないデータはスキップ
+        const x = entry.coordinates.x * width / 100;
+        const y = entry.coordinates.y * height / 100;
+        
+        ctx.beginPath();
+        ctx.arc(x, y, 7, 0, Math.PI * 2); // 少し小さく
+        // 色はエントリーのIDや日付に基づいて多様性を出す (例)
+        const hue = (entry.id * 30) % 360;
+        ctx.fillStyle = `hsla(${hue}, 70%, 60%, 0.85)`;
+        ctx.fill();
+        ctx.strokeStyle = `hsla(${hue}, 80%, 40%, 0.9)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        
+        // ラベル (ホバーで表示する方が良いかもしれないが、ここでは簡易的に)
+        ctx.fillStyle = '#57534e'; // stone-600
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'left';
+        // プロット点が重ならないように少しオフセット
+        ctx.fillText(entry.origin.substring(0,10), x + 10, y + (index%2 === 0 ? 4 : -6) );
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mapEntries, entries]); // mapEntriesも依存配列に追加
+
+    return (
+      <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6">
+        <h3 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 flex items-center gap-2">
+          <Map className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600" />
+          あなたの味覚マップ
+        </h3>
+        <div className="relative aspect-[3/2] max-w-full"> {/* アスペクト比を維持 */}
+          <canvas
+            ref={canvasRef}
+            width={600} // 内部解像度
+            height={400} // 内部解像度
+            className="w-full h-full rounded-xl border border-orange-200"
+          />
+          {/* <div className="absolute bottom-2 right-2 sm:bottom-4 sm:right-4 bg-white/80 backdrop-blur-sm rounded-lg p-2 sm:p-3 text-xs sm:text-sm">
+            <p className="text-gray-600">X: シンプル↔複雑, Y: 酸味↔甘味</p>
+          </div> */}
+        </div>
+      </div>
+    );
+  };
+
+  // AI味覚アシスタントのメッセージ生成
+  const getAiAssistantMessage = () => {
+    if (entries.length === 0) return "最初のコーヒーを記録して、味覚の旅を始めましょう！";
+    if (entries.length < 3) return "素晴らしいスタートです！色々なコーヒーを試して記録を増やしましょう。";
+
+    const origins = entries.map(e => e.origin.toLowerCase());
+    const mostFrequentOrigin = origins.sort((a,b) =>
+          origins.filter(v => v===a).length
+        - origins.filter(v => v===b).length
+    ).pop();
+    
+    const allFlavors = entries.flatMap(e => e.flavors.map(f => f.toLowerCase()));
+    const mostFrequentFlavor = allFlavors.sort((a,b) =>
+        allFlavors.filter(v => v===a).length
+      - allFlavors.filter(v => v===b).length
+    ).pop();
+
+    if (tasteLevel < 3) {
+      return `記録が ${entries.length} 件になりましたね！この調子で、${mostFrequentOrigin} 以外の産地や、${mostFrequentFlavor} 以外のフレーバーも探求してみましょう。`;
+    }
+    if (tasteLevel < 5) {
+      return `味覚レベル ${tasteLevel} 到達おめでとうございます！「トレーニング」モードで新しいフレーバーチャレンジに挑戦しませんか？`;
+    }
+    return `さすが味覚レベル ${tasteLevel}！あなたの得意な ${mostFrequentOrigin} (${mostFrequentFlavor}系) を深掘りするか、全く新しい体験を求めて未開拓の味覚ゾーンを探検するのも良いでしょう。`;
+  };
+
+  // メインダッシュボード (AIアシスタント、レベル表示追加)
+  const MainDashboard = () => {
+    const nextLevelXP = LEVEL_THRESHOLDS[tasteLevel] || LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length -1];
+    const progressToNextLevel = tasteLevel >= LEVEL_THRESHOLDS.length -1 ? 100 : Math.max(0, (experiencePoints - (LEVEL_THRESHOLDS[tasteLevel-1] || 0)) / (nextLevelXP - (LEVEL_THRESHOLDS[tasteLevel-1] || 0)) * 100);
+
+    return (
+      <div className="space-y-5 sm:space-y-6">
+        {/* ヘッダーセクション */}
+        <div className="bg-gradient-to-br from-amber-100 via-orange-50 to-yellow-100 rounded-3xl p-5 sm:p-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold text-amber-900 mb-1 sm:mb-2">おはようございます！</h1>
+              <p className="text-amber-700 text-sm sm:text-base">今日はどんなコーヒーと出会いますか？</p>
+            </div>
+            <button
+              onClick={() => setShowNewEntry(true)}
+              className="mt-3 sm:mt-0 bg-gradient-to-r from-amber-600 to-orange-600 text-white px-5 py-2.5 sm:px-6 sm:py-3 rounded-xl flex items-center gap-2 hover:shadow-lg transition-all text-sm sm:text-base"
+            >
+              <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+              新規記録
+            </button>
+          </div>
+          <div className="mt-4 sm:mt-6 border-t border-amber-300/70 pt-4 sm:pt-5 space-y-3">
+            <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2 text-amber-800">
+                    <Star className="w-5 h-5 text-yellow-500" />
+                    <span>味覚レベル: <strong className="text-lg">{tasteLevel}</strong></span>
+                </div>
+                <div className="flex items-center gap-2 text-amber-700">
+                    <Zap className="w-5 h-5 text-orange-500" />
+                    <span>XP: <strong className="text-lg">{experiencePoints}</strong> / {nextLevelXP}</span>
+                </div>
+            </div>
+            <div className="w-full bg-amber-200 rounded-full h-2.5 sm:h-3">
+                <div className="bg-gradient-to-r from-yellow-500 to-orange-500 h-2.5 sm:h-3 rounded-full" style={{ width: `${progressToNextLevel}%` }}></div>
+            </div>
+          </div>
+        </div>
+
+        {/* AI味覚アシスタント */}
+        <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl p-5 sm:p-6 shadow-sm">
+          <h3 className="text-lg sm:text-xl font-semibold mb-2 sm:mb-3 flex items-center gap-2">
+            <Lightbulb className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600" />
+            AI味覚アシスタント
+          </h3>
+          <p className="text-gray-700 text-sm sm:text-base">{getAiAssistantMessage()}</p>
+        </div>
+
+        {/* 今日のおすすめ (簡易的に最新の記録を表示) */}
+        {entries.length > 0 && (
+            <div className="bg-gradient-to-br from-teal-50 to-cyan-50 rounded-2xl p-5 sm:p-6 shadow-sm">
+                <h3 className="text-lg sm:text-xl font-semibold mb-2 sm:mb-3 flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-teal-600" />
+                    最近のハイライト
+                </h3>
+                <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedEntry(entries[0])}>
+                    <h4 className="font-semibold text-md sm:text-lg mb-1">{entries[0].origin} - {entries[0].shop}</h4>
+                    <p className="text-gray-600 text-xs sm:text-sm mb-2 line-clamp-2">{entries[0].impression}</p>
+                    <div className="flex flex-wrap gap-1">
+                    {entries[0].flavors?.slice(0,3).map((flavor, idx) => ( // 最初の3つだけ表示
+                        <span key={idx} className="bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full text-xs">{flavor}</span>
+                    ))}
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* 最近の記録リスト (変更なし、ただしスタイリングは全体に合わせる) */}
+        {/* ... (省略: 既存の最近の記録リストのJSX) ... */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {entries.slice(0, 4).map((entry) => ( // 最新4件表示
+            <div
+              key={entry.id}
+              className="bg-white rounded-2xl shadow-lg p-4 sm:p-5 hover:shadow-xl transition-all cursor-pointer"
+              onClick={() => setSelectedEntry(entry)}
+            >
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h4 className="font-semibold text-md sm:text-lg">{entry.origin}</h4>
+                  <p className="text-xs sm:text-sm text-gray-500">{entry.shop}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-500">
+                    {entry.date.toLocaleDateString('ja-JP')}
+                  </p>
+                  {/* ... アイコン表示 ... */}
+                </div>
+              </div>
+              <p className="text-xs sm:text-sm text-gray-700 line-clamp-2 mb-2">{entry.impression}</p>
+              <div className="flex flex-wrap gap-1">
+                {entry.flavors?.map((flavor, idx) => (
+                  <span key={idx} className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded text-xs">{flavor}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+          {entries.length > 4 && <button onClick={() => setCurrentView('all_entries')} className="md:col-span-2 btn-secondary mt-2">全ての記録を見る</button>}
+        </div>
+        
+        {/* 味覚マップ */}
+        <FlavorMap />
+      </div>
+    );
+  };
+
+  // トレーニングビュー (骨子)
+  const TrainingView = () => {
+    const [currentChallenge, setCurrentChallenge] = useState(null); // { type: 'flavor'/'blind', entry: {...} }
+    const [userAnswer, setUserAnswer] = useState('');
+    const [feedback, setFeedback] = useState('');
+
+    const startFlavorChallenge = () => {
+        if (entries.length === 0) {
+            setFeedback("記録がありません。まずコーヒーを記録しましょう！");
+            return;
+        }
+        const randomEntry = entries[Math.floor(Math.random() * entries.length)];
+        setCurrentChallenge({ type: 'flavor', entry: randomEntry });
+        setUserAnswer('');
+        setFeedback('');
+    };
+
+    // TODO: startBlindMemoryTest, handleChallengeSubmit などのロジック
+    const handleSubmitChallenge = () => {
+        if (!currentChallenge) return;
+        let xpEarned = 0;
+        let successMessage = "";
+
+        if (currentChallenge.type === 'flavor') {
+            // 簡単な正誤判定: ユーザーが入力したフレーバーが記録に含まれているか
+            const correctAnswers = currentChallenge.entry.flavors.filter(f => userAnswer.toLowerCase().includes(f.toLowerCase()));
+            if (correctAnswers.length > 0) {
+                xpEarned = XP_REWARDS.TRAINING_CHALLENGE_SUCCESS / 2 * correctAnswers.length;
+                successMessage = `${correctAnswers.length}個のフレーバーを認識！素晴らしい！`;
+                if (correctAnswers.length === currentChallenge.entry.flavors.length) {
+                    xpEarned *= 1.5; // パーフェクトボーナス
+                    successMessage += " パーフェクト！";
+                }
+            } else {
+                successMessage = "惜しい！もう一度挑戦してみましょう。";
+            }
+        }
+        // 他のチャレンジタイプも同様に
+        
+        if (xpEarned > 0) {
+            addXP(xpEarned, `Training: ${currentChallenge.type}`);
+            setFeedback(`正解！ ${successMessage} +${xpEarned}XP獲得！`);
+        } else {
+            setFeedback(successMessage || "チャレンジ結果を確認しました。");
+        }
+        setCurrentChallenge(null); // チャレンジ終了
+    };
+
+
+    return (
+        <div className="space-y-6">
+            <div className="bg-gradient-to-r from-purple-100 to-pink-100 rounded-3xl p-8">
+                <h2 className="text-3xl font-bold text-purple-900 mb-2">味覚トレーニング</h2>
+                <p className="text-purple-700">あなたの味覚を次のレベルへ！</p>
+            </div>
+
+            {feedback && <div className={`p-4 rounded-lg ${feedback.includes("正解") ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{feedback}</div>}
+
+            {!currentChallenge ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* フレーバーチャレンジ */}
+                    <div className="bg-white rounded-2xl shadow-lg p-6">
+                        <div className="flex items-center gap-3 mb-4">
+                        <Palette className="w-8 h-8 text-pink-600" />
+                        <h3 className="text-xl font-semibold">フレーバーチャレンジ</h3>
+                        </div>
+                        <p className="text-gray-600 mb-4">過去の記録からコーヒーを選び、そのフレーバーを当ててみましょう。記憶力と嗅覚・味覚の連動を鍛えます。</p>
+                        <button onClick={startFlavorChallenge} className="btn-primary bg-pink-600 hover:bg-pink-700 w-full">挑戦する</button>
+                    </div>
+                    {/* ブラインドメモリーテスト */}
+                    <div className="bg-white rounded-2xl shadow-lg p-6">
+                        <div className="flex items-center gap-3 mb-4">
+                        <Brain className="w-8 h-8 text-indigo-600" />
+                        <h3 className="text-xl font-semibold">ブラインドメモリーテスト</h3>
+                        </div>
+                        <p className="text-gray-600 mb-4">コーヒー名と産地だけをヒントに、味の記憶を呼び覚ましましょう。テイスティングノートの再現を目指します。</p>
+                        <button onClick={() => setFeedback("この機能は現在開発中です！")} className="btn-primary bg-indigo-600 hover:bg-indigo-700 w-full">挑戦する (開発中)</button>
+                    </div>
+                </div>
+            ) : (
+                <div className="bg-white rounded-2xl shadow-lg p-6">
+                    <h3 className="text-xl font-semibold mb-4">
+                        {currentChallenge.type === 'flavor' ? 'フレーバーチャレンジ' : 'ブラインドメモリーテスト'}
+                    </h3>
+                    {currentChallenge.type === 'flavor' && (
+                        <div>
+                            <p className="mb-2">コーヒー: <strong>{currentChallenge.entry.shop} - {currentChallenge.entry.origin}</strong> ({currentChallenge.entry.date.toLocaleDateString()})</p>
+                            <p className="mb-1">記録されている主なフレーバー（一部非表示の場合あり）:</p>
+                            <ul className="list-disc list-inside mb-3">
+                                {currentChallenge.entry.flavors.slice(0, Math.ceil(currentChallenge.entry.flavors.length / 2)).map(f => <li key={f}>{f}</li>) /* 半分だけ表示 */}
+                                {currentChallenge.entry.flavors.length > Math.ceil(currentChallenge.entry.flavors.length / 2) && <li>...他 いくつか</li>}
+                            </ul>
+                            <textarea 
+                                value={userAnswer} 
+                                onChange={(e) => setUserAnswer(e.target.value)}
+                                placeholder="感じたフレーバーや印象を記述してください..."
+                                className="textarea-field w-full h-24 mb-3"
+                            />
+                        </div>
+                    )}
+                    {/* TODO: ブラインドメモリーテスト用のUI */}
+                    <button onClick={handleSubmitChallenge} className="btn-primary w-full">回答を提出</button>
+                    <button onClick={() => { setCurrentChallenge(null); setFeedback(''); }} className="btn-secondary w-full mt-2">キャンセル</button>
+                </div>
+            )}
+
+            {/* 成長記録 */}
+            <div className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-2xl p-6">
+              {/* ... (既存の成長記録UI、ただし値は動的にする) ... */}
+              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2"><TrendingUp className="w-6 h-6 text-orange-600" />あなたの成長記録</h3>
+              <div className="space-y-3">
+                  <GrowthMetric label="認識したユニークフレーバー数" current={discoveredFlavors.length} target={50} color="orange" />
+                  <GrowthMetric label="探索したユニーク産地数" current={discoveredOrigins.length} target={20} color="green" />
+                  <GrowthMetric label="テイスティング記録数" current={entries.length} target={100} color="blue" />
+              </div>
+            </div>
+        </div>
+    );
+  };
+
+  const GrowthMetric = ({label, current, target, color = 'gray'}) => {
+    const percentage = Math.min(100, (current / target) * 100);
+    const colorClasses = {
+        orange: "bg-orange-500",
+        green: "bg-green-500",
+        blue: "bg-blue-500",
+        gray: "bg-gray-500",
+    };
+    return (
+        <div className="flex items-center justify-between text-sm sm:text-base">
+            <span className="text-gray-700 w-2/5">{label}</span>
+            <div className="w-3/5 flex items-center gap-2">
+                <div className={`w-full bg-gray-200 rounded-full h-2.5 sm:h-3`}>
+                    <div className={`${colorClasses[color]} h-2.5 sm:h-3 rounded-full`} style={{width: `${percentage}%`}}></div>
+                </div>
+                <span className="font-semibold text-xs sm:text-sm w-16 text-right">{current}/{target}</span>
+            </div>
+        </div>
+    );
+  };
+
+
+  // 統計ビュー (動的データ表示に強化)
+  const StatsView = () => {
+    const totalEntries = entries.length;
+    const uniqueOriginsCount = discoveredOrigins.length;
+    const uniqueFlavorsCount = discoveredFlavors.length;
+
+    const getTopItems = (items, count = 3) => {
+        const frequency = items.reduce((acc, item) => {
+            acc[item] = (acc[item] || 0) + 1;
+            return acc;
+        }, {});
+        return Object.entries(frequency)
+            .sort(([,a],[,b]) => b-a)
+            .slice(0, count)
+            .map(([name, num]) => ({name, num}));
+    };
+
+    const topOrigins = getTopItems(entries.map(e => e.origin));
+    const topFlavors = getTopItems(entries.flatMap(e => e.flavors));
+    const topProcesses = getTopItems(entries.map(e => e.process).filter(p => p));
+
+    const seasonCounts = entries.reduce((acc, entry) => {
+        if (entry.season) acc[entry.season] = (acc[entry.season] || 0) + 1;
+        return acc;
+    }, {});
+
+    return (
+        <div className="space-y-6">
+            <div className="bg-white rounded-3xl shadow-lg p-6 sm:p-8">
+                <h2 className="text-2xl sm:text-3xl font-bold mb-6 flex items-center gap-3">
+                    <BarChart3 className="w-7 h-7 sm:w-8 sm:h-8 text-indigo-600" />
+                    あなたのコーヒー統計
+                </h2>
+                
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+                    <StatCard title="総テイスティング数" value={totalEntries} icon={<Coffee className="w-6 h-6"/>} color="amber" />
+                    <StatCard title="探索した産地数" value={uniqueOriginsCount} icon={<MapPin className="w-6 h-6"/>}  color="blue" />
+                    <StatCard title="発見したフレーバー数" value={uniqueFlavorsCount} icon={<Palette className="w-6 h-6"/>} color="pink" />
+                    <StatCard title="現在の味覚レベル" value={tasteLevel} icon={<Star className="w-6 h-6"/>} color="yellow" />
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* 好みの傾向 */}
+                    <div className="bg-gray-50 rounded-xl p-4 sm:p-6">
+                        <h3 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">あなたの好み</h3>
+                        <PreferenceList title="よく記録する産地" items={topOrigins} icon={<Mountain className="text-green-600"/>} />
+                        <PreferenceList title="よく感じるフレーバー" items={topFlavors} icon={<Flower2 className="text-orange-600"/>} />
+                        <PreferenceList title="好みの精製方法" items={topProcesses} icon={<Droplet className="text-blue-600"/>} />
+                    </div>
+
+                    {/* シーズン別の傾向 */}
+                    <div className="bg-gray-50 rounded-xl p-4 sm:p-6">
+                        <h3 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">シーズン別のテイスティング数</h3>
+                        <div className="grid grid-cols-2 gap-3 sm:gap-4 text-center">
+                            <SeasonStat season="春" count={seasonCounts.spring || 0} icon={<Cherry className="text-pink-400"/>} />
+                            <SeasonStat season="夏" count={seasonCounts.summer || 0} icon={<Sun className="text-yellow-400"/>} />
+                            <SeasonStat season="秋" count={seasonCounts.autumn || 0} icon={<Flower2 className="text-orange-400"/>} /> {/* Flower2は秋のイメージ */}
+                            <SeasonStat season="冬" count={seasonCounts.winter || 0} icon={<Cloud className="text-gray-400"/>} /> {/* Cloudは冬のイメージ */}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+  };
+
+  const StatCard = ({ title, value, icon, color, detail }) => {
+    const colors = {
+        amber: "from-amber-100 to-orange-100 text-amber-900",
+        blue: "from-blue-100 to-indigo-100 text-blue-900",
+        pink: "from-pink-100 to-purple-100 text-pink-900",
+        yellow: "from-yellow-100 to-amber-100 text-yellow-900",
+    };
+    return (
+        <div className={`bg-gradient-to-br ${colors[color]} rounded-xl p-4 sm:p-5 shadow-sm`}>
+            <div className="flex items-center gap-2 text-sm opacity-80 mb-1">{icon} {title}</div>
+            <p className="text-2xl sm:text-3xl font-bold">{value}</p>
+            {detail && <p className="text-xs opacity-70 mt-1">{detail}</p>}
+        </div>
+    );
+  };
+
+  const PreferenceList = ({ title, items, icon }) => (
+    <div className="mb-4">
+        <h4 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">{icon} {title}</h4>
+        {items.length > 0 ? (
+            <ul className="space-y-1 text-sm">
+                {items.map(item => (
+                    <li key={item.name} className="flex justify-between">
+                        <span>{item.name}</span>
+                        <span className="font-medium text-gray-500">{item.num}回</span>
+                    </li>
+                ))}
+            </ul>
+        ) : <p className="text-sm text-gray-500">まだデータがありません。</p>}
+    </div>
+  );
+
+  const SeasonStat = ({season, count, icon}) => (
+    <div className="bg-white p-3 rounded-lg shadow">
+        {React.cloneElement(icon, {className: `${icon.props.className} w-8 h-8 mx-auto mb-1`})}
+        <p className="font-semibold text-sm">{season}</p>
+        <p className="text-xs text-gray-600">{count}件</p>
+    </div>
+  );
+
+  // 全記録表示ビュー (簡易)
+  const AllEntriesView = () => (
+    <div className="space-y-4">
+        <h2 className="text-2xl font-bold">全ての記録 ({entries.length}件)</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {entries.map(entry => (
+                <div key={entry.id} className="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-lg" onClick={() => setSelectedEntry(entry)}>
+                    <h3 className="font-semibold">{entry.origin} <span className="text-sm font-normal text-gray-600">- {entry.shop}</span></h3>
+                    <p className="text-xs text-gray-500">{entry.date.toLocaleDateString()}</p>
+                    <p className="text-sm line-clamp-2 my-1">{entry.impression}</p>
+                    <div className="flex flex-wrap gap-1">
+                        {entry.flavors?.map(f => <span key={f} className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded text-xs">{f}</span>)}
+                    </div>
+                </div>
+            ))}
+        </div>
+    </div>
+  );
+
+
+  // メインレンダリング
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 text-gray-800">
+      {/* ナビゲーション */}
+      <nav className="bg-white/90 backdrop-blur-md shadow-sm sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center gap-2 sm:gap-8">
+              <button onClick={() => setCurrentView('home')} className="text-xl sm:text-2xl font-bold text-amber-900 flex items-center gap-1 sm:gap-2">
+                <Coffee className="w-6 h-6 sm:w-8 sm:h-8" />
+                Coffee Journey
+              </button>
+              <div className="hidden md:flex gap-4 sm:gap-6">
+                {['home', 'map', 'training', 'stats', 'all_entries'].map(view => (
+                    <button
+                        key={view}
+                        onClick={() => setCurrentView(view)}
+                        className={`text-sm font-medium transition-colors pb-1 border-b-2 
+                            ${currentView === view 
+                                ? 'text-amber-600 border-amber-600' 
+                                : 'text-gray-600 hover:text-gray-900 border-transparent hover:border-gray-300'
+                            }`}
+                    >
+                        {view === 'home' && 'ホーム'}
+                        {view === 'map' && '味覚マップ'}
+                        {view === 'training' && 'トレーニング'}
+                        {view === 'stats' && '統計'}
+                        {view === 'all_entries' && '全記録'}
+                    </button>
+                ))}
+              </div>
+            </div>
+            {/* 検索とフィルター (機能は未実装) */}
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="relative hidden sm:block">
+                <Search className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+                <input type="text" placeholder="検索..." className="pl-9 pr-3 py-1.5 sm:py-2 rounded-full border border-gray-300 focus:outline-none focus:border-amber-400 text-sm w-32 sm:w-48" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              </div>
+              <button className="p-2 rounded-full hover:bg-gray-100 transition-colors">
+                <Filter className="w-5 h-5 text-gray-600" />
+              </button>
+               {/* モバイル用ナビゲーションメニューボタン (オプション) */}
+               <div className="md:hidden">
+                    <select 
+                        onChange={(e) => setCurrentView(e.target.value)} 
+                        value={currentView}
+                        className="text-sm p-2 border border-gray-300 rounded-md bg-white"
+                    >
+                        <option value="home">ホーム</option>
+                        <option value="map">マップ</option>
+                        <option value="training">トレーニング</option>
+                        <option value="stats">統計</option>
+                        <option value="all_entries">全記録</option>
+                    </select>
+                </div>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* メインコンテンツ */}
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-8 py-6 sm:py-8">
+        {currentView === 'home' && <MainDashboard />}
+        {currentView === 'map' && <FlavorMap />} 
+        {currentView === 'training' && <TrainingView />}
+        {currentView === 'stats' && <StatsView />}
+        {currentView === 'all_entries' && <AllEntriesView />}
+        {/* currentView === 'map' の詳細ページはFlavorMapに統合、または別途作成 */}
+      </main>
+
+      {/* モーダル類 */}
+      {showNewEntry && <NewEntryForm />}
+      {selectedEntry && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-md sm:max-w-lg md:max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                <div className="sticky top-0 bg-gradient-to-r from-amber-600 to-orange-600 p-4 sm:p-6 rounded-t-3xl">
+                    <div className="flex justify-between items-start">
+                        <div>
+                        <h2 className="text-xl sm:text-2xl font-bold text-white">{selectedEntry.origin}</h2>
+                        <p className="text-white/80 text-sm">{selectedEntry.region || selectedEntry.shop}</p>
+                        </div>
+                        <button onClick={() => setSelectedEntry(null)} className="text-white/80 hover:text-white transition-colors text-2xl">✕</button>
+                    </div>
+                </div>
+                <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-sm sm:text-base">
+                    {/* 詳細表示項目 */}
+                    <DetailItem label="店舗/購入場所" value={selectedEntry.shop} />
+                    {selectedEntry.producer && <DetailItem label="生産者" value={selectedEntry.producer} />}
+                    {selectedEntry.variety && <DetailItem label="品種" value={selectedEntry.variety} />}
+                    {selectedEntry.process && <DetailItem label="精製方法" value={selectedEntry.process} />}
+                    {selectedEntry.altitude && <DetailItem label="標高" value={selectedEntry.altitude} />}
+
+                    <div>
+                        <h3 className="font-semibold mb-1 text-gray-800">第一印象</h3>
+                        <p className="text-gray-700 bg-amber-50 p-2 rounded-lg">{selectedEntry.impression}</p>
+                    </div>
+                    {selectedEntry.laterNotes && (
+                        <div>
+                            <h3 className="font-semibold mb-1 text-gray-800">あとから分かった味</h3>
+                            <p className="text-gray-700 bg-orange-50 p-2 rounded-lg">{selectedEntry.laterNotes}</p>
+                        </div>
+                    )}
+                    <div>
+                        <h3 className="font-semibold mb-1 text-gray-800">フレーバーノート</h3>
+                        <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                        {selectedEntry.flavors?.map((flavor, idx) => (
+                            <span key={idx} className="bg-orange-100 text-orange-800 px-2.5 py-1 rounded-full text-xs sm:text-sm">{flavor}</span>
+                        ))}
+                        </div>
+                    </div>
+                    {selectedEntry.brewTemp && (
+                        <div>
+                            <h3 className="font-semibold mb-2 text-gray-800">抽出条件</h3>
+                            <div className="bg-gray-100 rounded-lg p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs sm:text-sm">
+                                <BrewDetailItem label="水温" value={`${selectedEntry.brewTemp}°C`} />
+                                <BrewDetailItem label="時間" value={selectedEntry.brewTime || '-'} />
+                                <BrewDetailItem label="挽き目" value={selectedEntry.grindSize || '-'} />
+                            </div>
+                        </div>
+                    )}
+                     <div>
+                        <h3 className="font-semibold mb-1 text-gray-800">味覚バランス (0-10)</h3>
+                        <div className="bg-purple-50 p-2 rounded-lg grid grid-cols-2 gap-2 text-xs">
+                            <span>酸味: {selectedEntry.paramAcidity}</span>
+                            <span>甘味: {selectedEntry.paramSweetness}</span>
+                            <span>複雑さ: {selectedEntry.paramComplexity}</span>
+                            <span>ボディ: {selectedEntry.paramBody}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* レベルアップ通知 */}
+      {showLevelUpNotification && (
+        <div className="fixed bottom-5 right-5 bg-gradient-to-r from-green-500 to-emerald-600 text-white p-4 rounded-lg shadow-xl z-50 flex items-center gap-3 animate-bounce">
+          <Award className="w-8 h-8" />
+          <div>
+            <p className="font-bold text-lg">レベルアップ！</p>
+            <p>味覚レベルが {lastLevel} → {tasteLevel} に上がりました！</p>
+          </div>
+          <button onClick={() => setShowLevelUpNotification(false)} className="ml-4 text-white/70 hover:text-white">✕</button>
+        </div>
+      )}
+
+      {/* CSS (グローバルスタイルやカスタムクラス) */}
+      <style jsx global>{`
+        .input-field {
+          @apply px-3 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-sm sm:text-base shadow-sm;
+        }
+        .textarea-field {
+          @apply w-full px-3 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 text-sm sm:text-base shadow-sm;
+        }
+        .btn-primary {
+          @apply bg-amber-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-amber-700 transition-colors shadow hover:shadow-md;
+        }
+        .btn-secondary {
+          @apply bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-semibold hover:bg-gray-300 transition-colors shadow-sm hover:shadow;
+        }
+        .slider-purple::-webkit-slider-thumb {
+            @apply appearance-none w-4 h-4 bg-purple-600 rounded-full cursor-pointer hover:bg-purple-700;
+        }
+        .slider-purple::-moz-range-thumb {
+            @apply w-4 h-4 bg-purple-600 rounded-full cursor-pointer border-none hover:bg-purple-700;
+        }
+      `}</style>
+    </div>
+  );
+};
+
+// ヘルパーコンポーネント
+const DetailItem = ({ label, value }) => (
+    <div>
+        <p className="text-xs text-gray-500">{label}</p>
+        <p className="font-semibold text-gray-800">{value}</p>
+    </div>
+);
+const BrewDetailItem = ({label, value}) => (
+    <div>
+        <p className="text-xs text-gray-500">{label}</p>
+        <p className="font-semibold text-gray-800">{value}</p>
+    </div>
+);
+
+
+export default CoffeeTastingApp;
